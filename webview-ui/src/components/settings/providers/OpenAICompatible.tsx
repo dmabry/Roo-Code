@@ -162,6 +162,15 @@ export const OpenAICompatible = ({
 					{t("settings:providers.useLegacyFormat")}
 				</Checkbox>
 			</div>
+
+			{/* Use OpenAI Responses API toggle */}
+			<div>
+				<Checkbox
+					checked={!!apiConfiguration?.openAiUseResponses}
+					onChange={(checked: boolean) => setApiConfigurationField("openAiUseResponses", checked)}>
+					{t("settings:providers.openAi.useResponses")}
+				</Checkbox>
+			</div>
 			<Checkbox
 				checked={apiConfiguration?.openAiStreamingEnabled ?? true}
 				onChange={handleInputChange("openAiStreamingEnabled", noTransform)}>
