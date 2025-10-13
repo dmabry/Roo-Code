@@ -168,7 +168,7 @@ export const OpenAICompatible = ({
 				<Checkbox
 					checked={!!apiConfiguration?.openAiUseResponses}
 					onChange={(checked: boolean) => setApiConfigurationField("openAiUseResponses", checked)}>
-					{t("settings:providers.openAi.useResponses")}
+					{t("settings:providers.openai.useResponses")}
 				</Checkbox>
 			</div>
 			<Checkbox
