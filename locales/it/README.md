@@ -35,7 +35,8 @@
 - [简体中文](../zh-CN/README.md)
 - [繁體中文](../zh-TW/README.md)
 - ...
-  </details>
+
+
 
 ---
 
@@ -86,6 +87,21 @@ Scopri di più: [Usare le Modalità](https://docs.roocode.com/basic-usage/using-
 - **[Richieste di funzionalità](https://github.com/RooCodeInc/Roo-Code/discussions/categories/feature-requests?discussions_q=is%3Aopen+category%3A%22Feature+Requests%22+sort%3Atop):** Hai un'idea? Condividila con gli sviluppatori.
 
 ---
+
+## Opzione OpenAI Responses API
+
+Roo può utilizzare opzionalmente l'API Responses di OpenAI. Abilita l'opzione nelle impostazioni del provider OpenAI selezionando "Use OpenAI Responses API" (imposta il campo del profilo provider `openAiUseResponses`). Con l'opzione attiva Roo tenterà prima il percorso di streaming tramite l'SDK ufficiale (`client.responses.create`). Se l'SDK non è disponibile o non restituisce un iterable asincrono, Roo effettuerà come fallback una POST SSE verso `/v1/responses`.
+
+Riferimenti di implementazione:
+
+- [`src/shared/api.ts:14`](src/shared/api.ts:14)
+- [`src/api/providers/utils/openai-responses.ts:1`](src/api/providers/utils/openai-responses.ts:1)
+- [`src/api/providers/base-openai-compatible-provider.ts:103`](src/api/providers/base-openai-compatible-provider.ts:103)
+
+Test:
+
+- Dalla cartella `src`: `cd src && npx vitest run api/providers/__tests__/openai-responses.spec.ts`
+- Test del flusso provider: `cd src && npx vitest run api/providers/__tests__/openai-responses-provider.spec.ts`
 
 ## Configurazione e sviluppo locale
 

@@ -35,7 +35,8 @@
 - [简体中文](../zh-CN/README.md)
 - [繁體中文](../zh-TW/README.md)
 - ...
-  </details>
+
+
 
 ---
 
@@ -86,6 +87,21 @@ Daha fazla: [Modları kullanma](https://docs.roocode.com/basic-usage/using-modes
 - **[Özellik İstekleri](https://github.com/RooCodeInc/Roo-Code/discussions/categories/feature-requests?discussions_q=is%3Aopen+category%3A%22Feature+Requests%22+sort%3Atop):** Bir fikriniz mi var? Geliştiricilerle paylaşın.
 
 ---
+
+## OpenAI Responses API seçeneği
+
+Roo, isteğe bağlı olarak OpenAI'nin Responses API'sini kullanabilir. Bunu OpenAI sağlayıcı ayarlarında "Use OpenAI Responses API" seçeneğini işaretleyerek etkinleştirin (bu, sağlayıcı alanı `openAiUseResponses`'ı ayarlar). Etkinleştirildiğinde Roo önce resmi SDK akış yolunu (`client.responses.create`) deneyecektir. SDK kullanılamıyor veya asenkron iterable döndürmüyorsa, Roo bir yedek olarak `/v1/responses` adresine SSE POST isteği yapacaktır.
+
+Uygulama referansları:
+
+- [`src/shared/api.ts:14`](src/shared/api.ts:14)
+- [`src/api/providers/utils/openai-responses.ts:1`](src/api/providers/utils/openai-responses.ts:1)
+- [`src/api/providers/base-openai-compatible-provider.ts:103`](src/api/providers/base-openai-compatible-provider.ts:103)
+
+Testler:
+
+- `src` klasöründen çalıştırın: `cd src && npx vitest run api/providers/__tests__/openai-responses.spec.ts`
+- Sağlayıcı akış testleri: `cd src && npx vitest run api/providers/__tests__/openai-responses-provider.spec.ts`
 
 ## Yerel Kurulum ve Geliştirme
 

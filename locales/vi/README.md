@@ -35,7 +35,8 @@
 - [简体中文](../zh-CN/README.md)
 - [繁體中文](../zh-TW/README.md)
 - ...
-  </details>
+
+
 
 ---
 
@@ -86,6 +87,21 @@ Xem thêm: [Sử dụng Chế độ](https://docs.roocode.com/basic-usage/using-
 - **[Yêu cầu tính năng](https://github.com/RooCodeInc/Roo-Code/discussions/categories/feature-requests?discussions_q=is%3Aopen+category%3A%22Feature+Requests%22+sort%3Atop):** Có ý tưởng? Hãy chia sẻ với các nhà phát triển.
 
 ---
+
+## Tùy chọn OpenAI Responses API
+
+Roo có thể tùy chọn sử dụng OpenAI Responses API. Bật mục này trong phần cấu hình nhà cung cấp OpenAI bằng cách chọn "Use OpenAI Responses API" (thiết lập trường cấu hình nhà cung cấp `openAiUseResponses`). Khi bật, Roo sẽ ưu tiên thử luồng streaming của SDK chính thức (`client.responses.create`). Nếu SDK không có sẵn hoặc không trả về một iterable bất đồng bộ, Roo sẽ chuyển sang phương án dự phòng bằng một POST SSE tới `/v1/responses`.
+
+Tham chiếu triển khai:
+
+- [`src/shared/api.ts:14`](src/shared/api.ts:14)
+- [`src/api/providers/utils/openai-responses.ts:1`](src/api/providers/utils/openai-responses.ts:1)
+- [`src/api/providers/base-openai-compatible-provider.ts:103`](src/api/providers/base-openai-compatible-provider.ts:103)
+
+Kiểm thử:
+
+- Từ thư mục `src`: `cd src && npx vitest run api/providers/__tests__/openai-responses.spec.ts`
+- Kiểm thử luồng nhà cung cấp: `cd src && npx vitest run api/providers/__tests__/openai-responses-provider.spec.ts`
 
 ## Cài đặt và phát triển cục bộ
 

@@ -35,7 +35,8 @@
 - [简体中文](../zh-CN/README.md)
 - [繁體中文](../zh-TW/README.md)
 - ...
-  </details>
+
+
 
 ---
 
@@ -86,6 +87,21 @@ Roo Code는 당신의 작업 방식에 맞춰 적응합니다.
 - **[기능 요청](https://github.com/RooCodeInc/Roo-Code/discussions/categories/feature-requests?discussions_q=is%3Aopen+category%3A%22Feature+Requests%22+sort%3Atop):** 아이디어가 있으신가요? 개발자들과 공유하세요.
 
 ---
+
+## OpenAI Responses API 옵션
+
+Roo는 선택적으로 OpenAI의 Responses API를 사용할 수 있습니다. OpenAI 공급자 설정에서 "Use OpenAI Responses API"를 켜면(공급자 설정 필드 `openAiUseResponses`가 설정됨) 활성화됩니다. 이 옵션이 켜져 있으면 Roo는 먼저 공식 SDK의 스트리밍 경로(`client.responses.create`)를 시도하고, SDK가 없거나 비동기 반복 가능(iterable)을 반환하지 않으면 `/v1/responses`에 대한 SSE POST로 폴백합니다.
+
+구현 참고:
+
+- [`src/shared/api.ts:14`](src/shared/api.ts:14)
+- [`src/api/providers/utils/openai-responses.ts:1`](src/api/providers/utils/openai-responses.ts:1)
+- [`src/api/providers/base-openai-compatible-provider.ts:103`](src/api/providers/base-openai-compatible-provider.ts:103)
+
+테스트:
+
+- `src` 폴더에서 실행: `cd src && npx vitest run api/providers/__tests__/openai-responses.spec.ts`
+- 공급자 플로우 테스트: `cd src && npx vitest run api/providers/__tests__/openai-responses-provider.spec.ts`
 
 ## 로컬 설정 및 개발
 

@@ -35,7 +35,8 @@
 - [简体中文](../zh-CN/README.md)
 - [繁體中文](../zh-TW/README.md)
 - ...
-  </details>
+
+
 
 ---
 
@@ -86,6 +87,21 @@ Roo Code адаптируется к вашему стилю работы, а н
 - **[Запросы на новые функции](https://github.com/RooCodeInc/Roo-Code/discussions/categories/feature-requests?discussions_q=is%3Aopen+category%3A%22Feature+Requests%22+sort%3Atop):** Есть идея? Поделитесь ею с разработчиками.
 
 ---
+
+## Опция OpenAI Responses API
+
+Roo может опционально использовать Responses API от OpenAI. Включите её в настройках провайдера OpenAI, установив флажок «Use OpenAI Responses API» (это задаёт поле провайдера `openAiUseResponses`). Когда опция включена, Roo сначала попытается использовать официальный потоковый путь SDK (`client.responses.create`). Если SDK недоступен или не возвращает асинхронный итератор, Roo выполнит резервный POST SSE на `/v1/responses`.
+
+Ссылки по реализации:
+
+- [`src/shared/api.ts:14`](src/shared/api.ts:14)
+- [`src/api/providers/utils/openai-responses.ts:1`](src/api/providers/utils/openai-responses.ts:1)
+- [`src/api/providers/base-openai-compatible-provider.ts:103`](src/api/providers/base-openai-compatible-provider.ts:103)
+
+Тесты:
+
+- Из папки `src`: `cd src && npx vitest run api/providers/__tests__/openai-responses.spec.ts`
+- Тесты потока провайдера: `cd src && npx vitest run api/providers/__tests__/openai-responses-provider.spec.ts`
 
 ## Локальная настройка и разработка
 
