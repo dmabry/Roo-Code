@@ -6,6 +6,10 @@ import { BaseOpenAiCompatibleProvider } from "../base-openai-compatible-provider
 // Minimal mock model info shape used in tests
 const mockModelInfo = {
 	info: {
+		// Provide the minimal required ModelInfo fields expected by BaseOpenAiCompatibleProvider
+		contextWindow: 4096,
+		supportsPromptCache: false,
+		// Preserve the fields used by these tests
 		supportsVerbosity: false,
 		supportsTemperature: true,
 		tiers: [],
@@ -15,14 +19,14 @@ const mockModelInfo = {
 }
 
 // Create a small TestHandler subclass for exercising the base provider behavior
-class TestHandler extends BaseOpenAiCompatibleProvider<"test"> {
+class TestHandler extends BaseOpenAiCompatibleProvider<"test-model"> {
 	constructor(options: any) {
 		super({
 			...options,
 			providerName: "test-provider",
 			baseURL: options.baseURL || "https://api.openai.com/v1",
-			defaultProviderModelId: "test",
-			providerModels: { test: (mockModelInfo as any).info },
+			defaultProviderModelId: "test-model",
+			providerModels: { "test-model": (mockModelInfo as any).info },
 			defaultTemperature: 0.5,
 		})
 	}

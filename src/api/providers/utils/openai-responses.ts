@@ -13,7 +13,7 @@ type BuildOptions = {
  * openai-native.ts:buildRequestBody(...)
  */
 export function buildResponsesRequestBody(
-	model: ModelInfo,
+	model: { id: string; info: ModelInfo },
 	formattedInput: any,
 	requestPreviousResponseId?: string,
 	systemPrompt?: string,
@@ -53,8 +53,9 @@ export function buildResponsesRequestBody(
 	}
 
 	// Explicit max output tokens when model specifies it
-	if (model.maxTokens) {
-		body.max_output_tokens = model.maxTokens
+	const modelMaxTokens = (model as any).maxTokens ?? model.info?.maxTokens
+	if (modelMaxTokens) {
+		body.max_output_tokens = modelMaxTokens
 	}
 
 	// previous_response_id for continuity when provided
@@ -162,7 +163,7 @@ export async function* responsesSseFetch(baseUrl: string, apiKey: string, reques
  */
 export async function* processResponsesEventStream(
 	streamOrEvent: any,
-	model: ModelInfo,
+	model: { id: string; info: ModelInfo },
 ): AsyncGenerator<ApiStreamChunk> {
 	// If it's an async iterable (SDK streaming)
 	if (streamOrEvent && typeof streamOrEvent[Symbol.asyncIterator] === "function") {
@@ -239,7 +240,7 @@ async function* parseReadableStreamAsSse(bodyStream: ReadableStream<Uint8Array>)
 }
 
 /** Map a single Responses event to Roo ApiStream chunks */
-async function* processSingleEvent(event: any, model: ModelInfo): AsyncGenerator<ApiStreamChunk> {
+async function* processSingleEvent(event: any, model: { id: string; info: ModelInfo }): AsyncGenerator<ApiStreamChunk> {
 	if (!event) return
 
 	// Prefer explicit event.type, fallback to event.event

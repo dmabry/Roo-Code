@@ -116,7 +116,7 @@ export abstract class BaseOpenAiCompatibleProvider<ModelName extends string>
 			const model = this.getModel()
 			// Format the conversation for Responses API
 			const formattedInput = formatFullConversation(systemPrompt, messages)
-			// Build the Responses request body
+			// Build the Responses request body (pass the full model wrapper)
 			const requestBody = buildResponsesRequestBody(
 				model,
 				formattedInput,
@@ -128,7 +128,9 @@ export abstract class BaseOpenAiCompatibleProvider<ModelName extends string>
 				{
 					enableGpt5ReasoningSummary: this.options.enableGpt5ReasoningSummary,
 					openAiNativeServiceTier: (this.options as any).openAiNativeServiceTier,
-					modelTemperature: this.options.modelTemperature,
+					// Normalize nullable modelTemperature (accepts number | null | undefined) to the expected number | undefined
+					modelTemperature:
+						typeof this.options.modelTemperature === "number" ? this.options.modelTemperature : undefined,
 				},
 			)
 
@@ -192,7 +194,7 @@ export abstract class BaseOpenAiCompatibleProvider<ModelName extends string>
 		}
 	}
 
-	override getModel() {
+	override getModel(): { id: string; info: ModelInfo } {
 		const id =
 			this.options.apiModelId && this.options.apiModelId in this.providerModels
 				? (this.options.apiModelId as ModelName)
