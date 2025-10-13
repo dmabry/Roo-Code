@@ -12,6 +12,14 @@ import { DEFAULT_HEADERS } from "./constants"
 import { BaseProvider } from "./base-provider"
 import { handleOpenAIError } from "./utils/openai-error-handler"
 
+import {
+	buildResponsesRequestBody,
+	responsesSdkStream,
+	responsesSseFetch,
+	processResponsesEventStream,
+	formatFullConversation,
+} from "./utils/openai-responses"
+
 type BaseOpenAiCompatibleProviderOptions<ModelName extends string> = ApiHandlerOptions & {
 	providerName: string
 	baseURL: string
@@ -103,6 +111,50 @@ export abstract class BaseOpenAiCompatibleProvider<ModelName extends string>
 		messages: Anthropic.Messages.MessageParam[],
 		metadata?: ApiHandlerCreateMessageMetadata,
 	): ApiStream {
+		// If the provider is configured to use OpenAI Responses, branch to that flow.
+		if (this.options.openAiUseResponses) {
+			const model = this.getModel()
+			// Format the conversation for Responses API
+			const formattedInput = formatFullConversation(systemPrompt, messages)
+			// Build the Responses request body
+			const requestBody = buildResponsesRequestBody(
+				model,
+				formattedInput,
+				undefined,
+				systemPrompt,
+				undefined,
+				undefined,
+				metadata,
+				{
+					enableGpt5ReasoningSummary: this.options.enableGpt5ReasoningSummary,
+					openAiNativeServiceTier: (this.options as any).openAiNativeServiceTier,
+					modelTemperature: this.options.modelTemperature,
+				},
+			)
+
+			// Try SDK first, fallback to SSE fetch on error or non-iterable response
+			try {
+				// SDK may return an AsyncIterable or a single event object
+				const sdkStream = await responsesSdkStream(this.client as any, requestBody)
+
+				// Process whatever the SDK returned into ApiStream chunks
+				for await (const chunk of processResponsesEventStream(sdkStream, model)) {
+					yield chunk
+				}
+			} catch (err) {
+				// Fallback to manual SSE fetch
+				for await (const chunk of processResponsesEventStream(
+					responsesSseFetch(this.baseURL, this.options.apiKey!, requestBody),
+					model,
+				)) {
+					yield chunk
+				}
+			}
+
+			return
+		}
+
+		// Default to Chat/Completions-compatible flow
 		const stream = await this.createStream(systemPrompt, messages, metadata)
 
 		for await (const chunk of stream) {

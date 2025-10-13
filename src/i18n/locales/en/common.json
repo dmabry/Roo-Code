@@ -229,5 +229,10 @@
 	"docsLink": {
 		"label": "Docs",
 		"url": "https://docs.roocode.com"
+	},
+	"providers": {
+		"openai": {
+			"useResponses": "Use OpenAI Responses API"
+		}
 	}
 }

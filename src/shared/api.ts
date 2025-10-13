@@ -19,6 +19,11 @@ export type ApiHandlerOptions = Omit<ProviderSettings, "apiProvider"> & {
 	 */
 	enableGpt5ReasoningSummary?: boolean
 	/**
+	 * When true, use the OpenAI Responses API flow (responses.create or SSE fallback)
+	 * instead of the Chat/Completions-compatible endpoints. Defaults to false.
+	 */
+	openAiUseResponses?: boolean
+	/**
 	 * Optional override for Ollama's num_ctx parameter.
 	 * When set, this value will be used in Ollama chat requests.
 	 * When undefined, Ollama will use the model's default num_ctx from the Modelfile.

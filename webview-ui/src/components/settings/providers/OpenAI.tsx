@@ -75,6 +75,13 @@ export const OpenAI = ({ apiConfiguration, setApiConfigurationField, selectedMod
 				</VSCodeButtonLink>
 			)}
 
+			{/* Use OpenAI Responses API toggle */}
+			<Checkbox
+				checked={!!apiConfiguration?.openAiUseResponses}
+				onChange={(checked: boolean) => setApiConfigurationField("openAiUseResponses", checked)}>
+				{t("settings:providers.openAi.useResponses")}
+			</Checkbox>
+
 			{(() => {
 				const allowedTiers = (selectedModelInfo?.tiers?.map((t) => t.name).filter(Boolean) || []).filter(
 					(t) => t === "flex" || t === "priority",

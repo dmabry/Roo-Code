@@ -250,6 +250,8 @@ const openAiSchema = baseProviderSettingsSchema.extend({
 	openAiUseAzure: z.boolean().optional(),
 	azureApiVersion: z.string().optional(),
 	openAiStreamingEnabled: z.boolean().optional(),
+	// Toggle to opt into the OpenAI Responses API
+	openAiUseResponses: z.boolean().optional(),
 	openAiHostHeader: z.string().optional(), // Keep temporarily for backward compatibility during migration.
 	openAiHeaders: z.record(z.string(), z.string()).optional(),
 })
