@@ -153,6 +153,20 @@ export async function presentAssistantMessage(cline: Task) {
 			await cline.say("text", content, undefined, block.partial)
 			break
 		}
+		case "reasoning": {
+			// Present reasoning blocks as "thinking" sections in the UI.
+			// Some providers yield reasoning using `text` and others use
+			// `content` — handle both. Respect partial streaming flag.
+			if (cline.didRejectTool || cline.didAlreadyUseTool) {
+				break
+			}
+
+			// Use an any-cast to handle multiple possible shapes emitted by providers
+			// (some use `text`, others `content`, others may use `delta` fragments).
+			const reasoningContent = ((block as any).content ?? (block as any).text ?? "") as string
+			await cline.say("reasoning", reasoningContent, undefined, (block as any).partial ?? false)
+			break
+		}
 		case "tool_use":
 			const toolDescription = (): string => {
 				switch (block.name) {

@@ -27,6 +27,12 @@ export interface TextContent {
 	partial: boolean
 }
 
+export interface ReasoningContent {
+	type: "reasoning"
+	text: string
+	partial: boolean
+}
+
 export const toolParamNames = [
 	"command",
 	"path",
