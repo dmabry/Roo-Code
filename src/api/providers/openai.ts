@@ -251,18 +251,29 @@ export class OpenAiHandler extends BaseProvider implements SingleCompletionHandl
 			for await (const chunk of stream) {
 				const delta = chunk.choices[0]?.delta ?? {}
 
+				// Primary streaming event for text content (may include <think> markers)
 				if (delta.content) {
 					for (const chunk of matcher.update(delta.content)) {
 						yield chunk
 					}
 				}
 
-				if ("reasoning_content" in delta && delta.reasoning_content) {
+				// Some models/providers emit reasoning in a separate delta field:
+				// - `delta.reasoning` (observed from some OSS models)
+				// - `delta.reasoning_content` (older/alternate shape)
+				// Handle both to ensure reasoning blocks appear as "thinking" in the UI.
+				if ("reasoning" in delta && delta.reasoning) {
+					yield {
+						type: "reasoning",
+						text: String(delta.reasoning),
+					}
+				} else if ("reasoning_content" in delta && delta.reasoning_content) {
 					yield {
 						type: "reasoning",
 						text: (delta.reasoning_content as string | undefined) || "",
 					}
 				}
+
 				if (chunk.usage) {
 					lastUsage = chunk.usage
 				}
