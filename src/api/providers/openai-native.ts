@@ -1030,7 +1030,14 @@ export class OpenAiNativeHandler extends BaseProvider implements SingleCompletio
 								// Status events - no action needed
 							}
 							// Fallback for older formats or unexpected responses
-							else if (parsed.choices?.[0]?.delta?.content) {
+							else if (parsed.choices?.[0]?.delta?.reasoning) {
+								// Some OpenAI-compatible streams emit reasoning in choices[].delta.reasoning
+								hasContent = true
+								yield {
+									type: "reasoning",
+									text: parsed.choices[0].delta.reasoning,
+								}
+							} else if (parsed.choices?.[0]?.delta?.content) {
 								hasContent = true
 								yield {
 									type: "text",
