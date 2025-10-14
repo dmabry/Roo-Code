@@ -103,10 +103,15 @@ export abstract class BaseOpenAiCompatibleProvider<ModelName extends string>
 			const delta = chunk.choices[0]?.delta
 
 			// Handle reasoning content (e.g., from models like gpt-oss-20b)
-			if (delta?.reasoning) {
+			// Some providers include a reasoning field in the delta that's not in standard OpenAI types
+			const deltaWithReasoning = delta as OpenAI.Chat.Completions.ChatCompletionChunk.Choice.Delta & {
+				reasoning?: string
+			}
+
+			if (deltaWithReasoning?.reasoning) {
 				yield {
 					type: "reasoning",
-					text: delta.reasoning,
+					text: deltaWithReasoning.reasoning,
 				}
 			}
 
