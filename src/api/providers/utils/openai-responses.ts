@@ -92,7 +92,21 @@ export async function responsesSdkStream(client: any, requestBody: any) {
  * Yields parsed JSON events (same shape as SDK events where possible).
  */
 export async function* responsesSseFetch(baseUrl: string, apiKey: string, requestBody: any) {
-	const url = `${baseUrl.replace(/\/$/, "")}/v1/responses`
+	// Normalize the provided baseUrl to avoid duplicating `/v1` when callers
+	// already include it (e.g. "https://api.openai.com/v1").
+	let normalized = (baseUrl || "").replace(/\/+$/, "") // remove trailing slashes
+	let url: string
+	// If caller already provided a full /responses path, use it as-is.
+	if (normalized.endsWith("/v1/responses") || normalized.endsWith("/responses")) {
+		url = normalized
+	} else if (normalized.endsWith("/v1")) {
+		// e.g. "https://api.openai.com/v1" -> "https://api.openai.com/v1/responses"
+		url = `${normalized}/responses`
+	} else {
+		// e.g. "https://api.example.com" -> "https://api.example.com/v1/responses"
+		url = `${normalized}/v1/responses`
+	}
+
 	// Ensure streaming
 	requestBody = { ...requestBody, stream: true }
 
