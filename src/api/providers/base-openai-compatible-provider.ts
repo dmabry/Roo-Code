@@ -102,6 +102,14 @@ export abstract class BaseOpenAiCompatibleProvider<ModelName extends string>
 		for await (const chunk of stream) {
 			const delta = chunk.choices[0]?.delta
 
+			// Handle reasoning content (e.g., from models like gpt-oss-20b)
+			if (delta?.reasoning) {
+				yield {
+					type: "reasoning",
+					text: delta.reasoning,
+				}
+			}
+
 			if (delta?.content) {
 				yield {
 					type: "text",
