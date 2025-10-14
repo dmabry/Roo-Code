@@ -170,6 +170,9 @@ export const OpenAICompatible = ({
 					onChange={(checked: boolean) => setApiConfigurationField("openAiUseResponses", checked)}>
 					{t("settings:providers.openai.useResponses")}
 				</Checkbox>
+				<div className="text-sm text-vscode-descriptionForeground ml-6">
+					{t("settings:providers.openai.useResponsesDescription")}
+				</div>
 			</div>
 			<Checkbox
 				checked={apiConfiguration?.openAiStreamingEnabled ?? true}
