@@ -257,6 +257,10 @@
 		"useReasoning": "Enable reasoning",
 		"useHostHeader": "Use custom Host header",
 		"useLegacyFormat": "Use legacy OpenAI API format",
+		"openai": {
+			"useResponses": "Use Responses API",
+			"useResponsesDescription": "Use OpenAI's Responses API for streaming and richer outputs when supported by your provider. Enable this if your account and endpoint support the Responses endpoint."
+		},
 		"customHeaders": "Custom Headers",
 		"headerName": "Header name",
 		"headerValue": "Header value",

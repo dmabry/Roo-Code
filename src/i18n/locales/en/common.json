@@ -232,7 +232,7 @@
 	},
 	"providers": {
 		"openai": {
-			"useResponses": "Use OpenAI Responses API",
+			"useResponses": "Use Responses API",
 			"useResponsesDescription": "Use OpenAI's Responses API for streaming and richer outputs when supported by your provider. Enable this if your account and endpoint support the Responses endpoint."
 		}
 	}
