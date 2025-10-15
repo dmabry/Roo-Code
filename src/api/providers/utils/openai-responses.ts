@@ -1,5 +1,61 @@
 import type { ModelInfo, ReasoningEffortWithMinimal, ServiceTier } from "@roo-code/types"
-import type { ApiStreamChunk } from "../../transform/stream"
+import type {
+	ApiStreamChunk,
+	ApiStreamTextChunk,
+	ApiStreamUsageChunk,
+	ApiStreamReasoningChunk,
+} from "../../transform/stream"
+
+type ConversationMessage = {
+	role: "user" | "assistant"
+	content: any[]
+}
+
+/**
+ * Format Anthropic-style messages into the structure expected by the OpenAI
+ * Responses API. System prompts are handled separately via the `instructions`
+ * field, but we allow the caller to pass the prompt to preserve parity with
+ * existing call sites.
+ */
+export function formatFullConversation(_systemPrompt: string | undefined, messages: any[]): ConversationMessage[] {
+	const formatted: ConversationMessage[] = []
+
+	for (const message of messages || []) {
+		if (!message) continue
+
+		const role: ConversationMessage["role"] = message.role === "user" ? "user" : "assistant"
+		const contentBlocks: any[] = []
+
+		const rawContent = message.content
+
+		if (typeof rawContent === "string") {
+			contentBlocks.push({
+				type: role === "user" ? "input_text" : "output_text",
+				text: rawContent,
+			})
+		} else if (Array.isArray(rawContent)) {
+			for (const block of rawContent) {
+				if (!block) continue
+
+				if (block.type === "text" && typeof block.text === "string") {
+					contentBlocks.push({
+						type: role === "user" ? "input_text" : "output_text",
+						text: block.text,
+					})
+				} else if (typeof block.type === "string") {
+					// Preserve any structured block (images, tool calls, etc.)
+					contentBlocks.push({ ...block })
+				}
+			}
+		}
+
+		if (contentBlocks.length > 0) {
+			formatted.push({ role, content: contentBlocks })
+		}
+	}
+
+	return formatted
+}
 
 type BuildOptions = {
 	enableGpt5ReasoningSummary?: boolean
@@ -121,7 +177,7 @@ export async function* responsesSseFetch(baseUrl: string, apiKey: string, reques
 	})
 
 	if (!res.ok) {
-		const text = await res.text().catch(() => "<no body>")
+		const text = await (typeof res.text === "function" ? res.text() : Promise.resolve("<no body>"))
 		throw new Error(`Responses SSE request failed: ${res.status} ${res.statusText} - ${text}`)
 	}
 
@@ -154,10 +210,8 @@ export async function* responsesSseFetch(baseUrl: string, apiKey: string, reques
 						}
 						try {
 							const parsed = JSON.parse(data)
-							yield parsed
-						} catch {
-							// Non-JSON data — ignore
-						}
+							yield parsed as unknown
+						} catch {}
 					}
 				}
 			}
@@ -167,55 +221,40 @@ export async function* responsesSseFetch(baseUrl: string, apiKey: string, reques
 	}
 }
 
-/**
- * Process either:
- *  - an AsyncIterable of events (SDK streaming), or
- *  - a ReadableStream (body), or
- *  - a single event object
- *
- * The function yields Roo ApiStream chunks.
- */
 export async function* processResponsesEventStream(
 	streamOrEvent: any,
 	model: { id: string; info: ModelInfo },
 ): AsyncGenerator<ApiStreamChunk> {
-	// If it's an async iterable (SDK streaming)
-	if (streamOrEvent && typeof streamOrEvent[Symbol.asyncIterator] === "function") {
+	if (!streamOrEvent) {
+		return
+	}
+
+	if (typeof streamOrEvent[Symbol.asyncIterator] === "function") {
 		for await (const event of streamOrEvent) {
-			// SDK sometimes yields a ReadableStream body; handle that case
 			if (event && typeof event === "object" && typeof event.body?.getReader === "function") {
-				// Convert body -> SSE events then process
 				for await (const parsedEvent of parseReadableStreamAsSse(event.body)) {
-					for await (const chunk of processSingleEvent(parsedEvent, model)) {
-						yield chunk
-					}
+					yield* processSingleEvent(parsedEvent, model)
 				}
 			} else {
-				for await (const chunk of processSingleEvent(event, model)) {
-					yield chunk
-				}
+				yield* processSingleEvent(event, model)
 			}
 		}
 		return
 	}
 
-	// If it's a ReadableStream directly (SSE)
-	if (streamOrEvent && typeof streamOrEvent.getReader === "function") {
+	if (typeof streamOrEvent?.getReader === "function") {
 		for await (const parsedEvent of parseReadableStreamAsSse(streamOrEvent)) {
-			for await (const chunk of processSingleEvent(parsedEvent, model)) {
-				yield chunk
-			}
+			yield* processSingleEvent(parsedEvent, model)
 		}
 		return
 	}
 
-	// Otherwise assume a single event object
-	for await (const chunk of processSingleEvent(streamOrEvent, model)) {
-		yield chunk
-	}
+	yield* processSingleEvent(streamOrEvent, model)
 }
 
-/** Helper: parse a ReadableStream (Uint8Array) into parsed SSE JSON events */
+/**
+ * Convert a ReadableStream into SSE events.
+ */
 async function* parseReadableStreamAsSse(bodyStream: ReadableStream<Uint8Array>) {
 	const reader = bodyStream.getReader()
 	const decoder = new TextDecoder()
@@ -225,10 +264,8 @@ async function* parseReadableStreamAsSse(bodyStream: ReadableStream<Uint8Array>)
 			const { done, value } = await reader.read()
 			if (done) break
 			buffer += decoder.decode(value, { stream: true })
-
 			const parts = buffer.split("\n\n")
 			buffer = parts.pop() || ""
-
 			for (const part of parts) {
 				const lines = part.split("\n").map((l) => l.trim())
 				for (const line of lines) {
@@ -240,10 +277,8 @@ async function* parseReadableStreamAsSse(bodyStream: ReadableStream<Uint8Array>)
 						}
 						try {
 							const parsed = JSON.parse(data)
-							yield parsed
-						} catch {
-							// ignore parse errors
-						}
+							yield parsed as unknown
+						} catch {}
 					}
 				}
 			}
@@ -253,70 +288,72 @@ async function* parseReadableStreamAsSse(bodyStream: ReadableStream<Uint8Array>)
 	}
 }
 
-/** Map a single Responses event to Roo ApiStream chunks */
-async function* processSingleEvent(event: any, model: { id: string; info: ModelInfo }): AsyncGenerator<ApiStreamChunk> {
+/**
+ * Process a single event into ApiStream chunks.
+ */
+async function* processSingleEvent(event: any, model: { id: string; info: ModelInfo }) {
 	if (!event) return
+	const type = event.type ?? event.event
 
-	// Prefer explicit event.type, fallback to event.event
-	const type = event.type || event.event
-
-	// Keep response shape handling similar to existing implementation:
-	// - text deltas
+	// Text delta or output text delta
 	if (type === "response.text.delta" || type === "response.output_text.delta") {
-		if (event.delta) {
-			yield { type: "text", text: event.delta }
+		if (typeof event?.delta === "string" && event.delta.length > 0) {
+			yield { type: "text", text: event.delta } as ApiStreamTextChunk
 		}
 		return
 	}
 
-	// - reasoning deltas and summaries
+	// Reasoning delta, reasoning_text_delta, summary etc.
 	if (
 		type === "response.reasoning.delta" ||
 		type === "response.reasoning_text.delta" ||
 		type === "response.reasoning_summary.delta" ||
 		type === "response.reasoning_summary_text.delta"
 	) {
-		if (event.delta) {
-			yield { type: "reasoning", text: event.delta }
+		if (typeof event?.delta === "string" && event.delta.length > 0) {
+			yield { type: "reasoning", text: event.delta } as ApiStreamReasoningChunk
 		}
 		return
 	}
 
-	// - usage events (best-effort; precise cost calculation happens elsewhere)
+	// Usage or usage events
 	if (type === "response.usage" || event?.usage || event?.response?.usage) {
-		const usage = event.usage ?? event.response?.usage ?? {}
+		const usage = event?.usage ?? event?.response?.usage ?? {}
 		yield {
 			type: "usage",
 			inputTokens: usage.input_tokens ?? usage.prompt_tokens ?? 0,
 			outputTokens: usage.output_tokens ?? usage.completion_tokens ?? 0,
-			cacheReadTokens: usage.cache_read_tokens ?? 0,
 			cacheWriteTokens: usage.cache_write_tokens ?? 0,
-			totalCost: 0,
-		} as any
+			cacheReadTokens: usage.cache_read_tokens ?? 0,
+			totalCost: usage.total_cost ?? 0,
+		} as ApiStreamUsageChunk
 		return
 	}
 
-	// - completed / done
+	// Completion or done events
 	if (type === "response.done" || type === "response.completed") {
-		yield { type: "done" } as any
 		return
 	}
 
-	// - Non-streaming full response: event.response.output array
-	if (event.response && Array.isArray(event.response.output)) {
-		for (const outputItem of event.response.output) {
-			if (outputItem.type === "text" && Array.isArray(outputItem.content)) {
-				for (const content of outputItem.content) {
-					if (content?.type === "text" && typeof content.text === "string") {
-						yield { type: "text", text: content.text }
+	if (event?.response && Array.isArray(event.response.output)) {
+		for (const output of event.response.output) {
+			if (!output) continue
+
+			if (output.type === "text") {
+				if (typeof output.text === "string") {
+					yield { type: "text", text: output.text } as ApiStreamTextChunk
+				}
+				if (Array.isArray(output.content)) {
+					for (const content of output.content) {
+						if (content?.type === "text" && typeof content.text === "string") {
+							yield { type: "text", text: content.text } as ApiStreamTextChunk
+						}
 					}
 				}
-			}
-			// Handle reasoning summaries included in non-streaming outputs
-			if (outputItem.type === "reasoning" && Array.isArray(outputItem.summary)) {
-				for (const summary of outputItem.summary) {
+			} else if (output.type === "reasoning" && Array.isArray(output.summary)) {
+				for (const summary of output.summary) {
 					if (summary?.type === "summary_text" && typeof summary.text === "string") {
-						yield { type: "reasoning", text: summary.text }
+						yield { type: "reasoning", text: summary.text } as ApiStreamReasoningChunk
 					}
 				}
 			}
@@ -324,44 +361,7 @@ async function* processSingleEvent(event: any, model: { id: string; info: ModelI
 		return
 	}
 
-	// Fallback: if event.delta is present as a string, yield as text
-	if (typeof event.delta === "string") {
-		yield { type: "text", text: event.delta }
+	if (typeof event?.delta === "string" && event.delta.length > 0) {
+		yield { type: "text", text: event.delta } as ApiStreamTextChunk
 	}
-}
-
-/**
- * Minimal recreation of the conversation formatting used by the Responses API.
- * Copied/adapted from openai-native.formatFullConversation(...) for reuse by providers.
- */
-export function formatFullConversation(systemPrompt: string, messages: any[]): any[] {
-	const formattedMessages: any[] = []
-
-	for (const message of messages) {
-		const role = message.role === "user" ? "user" : "assistant"
-		const content: any[] = []
-
-		if (typeof message.content === "string") {
-			if (role === "user") {
-				content.push({ type: "input_text", text: message.content })
-			} else {
-				content.push({ type: "output_text", text: message.content })
-			}
-		} else if (Array.isArray(message.content)) {
-			for (const block of message.content) {
-				if (block.type === "text") {
-					content.push({ type: role === "user" ? "input_text" : "output_text", text: block.text })
-				} else {
-					// Preserve unknown block shapes (images, attachments, etc.)
-					content.push(block)
-				}
-			}
-		}
-
-		if (content.length > 0) {
-			formattedMessages.push({ role, content })
-		}
-	}
-
-	return formattedMessages
 }

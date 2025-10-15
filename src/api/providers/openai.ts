@@ -119,15 +119,19 @@ export class OpenAiHandler extends BaseProvider implements SingleCompletionHandl
 
 			// Try SDK first, fallback to SSE fetch on error or non-iterable response
 			try {
-				// SDK may return an AsyncIterable or a single event object
 				const sdkStream = await responsesSdkStream(this.client as any, requestBody)
 
-				// Process whatever the SDK returned into ApiStream chunks
+				let emittedChunks = false
 				for await (const chunk of processResponsesEventStream(sdkStream, model)) {
+					emittedChunks = true
 					yield chunk
 				}
+				if (emittedChunks) {
+					return
+				}
+
+				throw new Error("responses.create yielded no chunks")
 			} catch (err) {
-				// Fallback to manual SSE fetch
 				for await (const chunk of processResponsesEventStream(
 					responsesSseFetch(
 						this.options.openAiBaseUrl ?? "https://api.openai.com/v1",

@@ -1,15 +1,33 @@
-import { describe, it, expect, vitest, beforeEach } from "vitest"
-import OpenAI from "openai"
+import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from "vitest"
 import { Anthropic } from "@anthropic-ai/sdk"
 import { BaseOpenAiCompatibleProvider } from "../base-openai-compatible-provider"
 
-// Minimal mock model info shape used in tests
+// Mutable reference used by the mocked OpenAI constructor.
+let currentResponsesCreate: Mock
+
+vi.mock("openai", () => {
+	class MockOpenAI {
+		responses: { create: (...args: any[]) => Promise<any> }
+
+		constructor() {
+			this.responses = {
+				create: (...args: any[]) => {
+					if (!currentResponsesCreate) {
+						throw new Error("mockResponsesCreate not initialised")
+					}
+					return currentResponsesCreate(...args)
+				},
+			}
+		}
+	}
+
+	return { __esModule: true, default: MockOpenAI }
+})
+
 const mockModelInfo = {
 	info: {
-		// Provide the minimal required ModelInfo fields expected by BaseOpenAiCompatibleProvider
 		contextWindow: 4096,
 		supportsPromptCache: false,
-		// Preserve the fields used by these tests
 		supportsVerbosity: false,
 		supportsTemperature: true,
 		tiers: [],
@@ -18,7 +36,6 @@ const mockModelInfo = {
 	id: "test-model",
 }
 
-// Create a small TestHandler subclass for exercising the base provider behavior
 class TestHandler extends BaseOpenAiCompatibleProvider<"test-model"> {
 	constructor(options: any) {
 		super({
@@ -32,35 +49,64 @@ class TestHandler extends BaseOpenAiCompatibleProvider<"test-model"> {
 	}
 
 	override getModel() {
-		// Return an object shaped like other handlers expect: { id, info, ...params }
 		return { id: "test-model", info: mockModelInfo.info, maxTokens: mockModelInfo.maxTokens }
 	}
 }
 
-describe("BaseOpenAiCompatibleProvider Responses flow", () => {
-	let mockResponsesCreate: any
+function createSseReadable(payload: string, chunkSize = payload.length) {
+	const encoder = new TextEncoder()
+	const chunks: Uint8Array[] = []
+	for (let i = 0; i < payload.length; i += chunkSize) {
+		chunks.push(encoder.encode(payload.slice(i, i + chunkSize)))
+	}
 
+	let idx = 0
+	const reader = {
+		async read() {
+			if (idx >= chunks.length) {
+				return { done: true, value: new Uint8Array() }
+			}
+			return { done: false, value: chunks[idx++] }
+		},
+		releaseLock() {},
+	}
+
+	return {
+		getReader: () => reader,
+	} as ReadableStream<Uint8Array>
+}
+
+function stubFetchWithSse(events: unknown[], chunkSize = 8) {
+	const payload = events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join("") + "data: [DONE]\n\n"
+
+	const fetchMock = vi.fn().mockResolvedValue({
+		ok: true,
+		status: 200,
+		statusText: "OK",
+		body: createSseReadable(payload, chunkSize),
+	} as any)
+
+	vi.stubGlobal("fetch", fetchMock)
+	return fetchMock
+}
+
+describe("BaseOpenAiCompatibleProvider Responses flow", () => {
 	beforeEach(() => {
-		vitest.restoreAllMocks()
-		mockResponsesCreate = vitest.fn()
-		// Mock the OpenAI constructor to return an instance with responses.create
-		vitest.mock("openai", () => {
-			const mockConstructor = vitest.fn().mockImplementation(() => ({
-				responses: {
-					create: mockResponsesCreate,
-				},
-			}))
-			return { __esModule: true, default: mockConstructor }
-		})
+		currentResponsesCreate = vi.fn()
+	})
+
+	afterEach(() => {
+		vi.restoreAllMocks()
 	})
 
 	it("uses SDK responses.create when openAiUseResponses is enabled", async () => {
-		// Make responses.create return an async iterable of one event
-		mockResponsesCreate.mockResolvedValue({
-			[Symbol.asyncIterator]: async function* () {
+		currentResponsesCreate.mockResolvedValue({
+			async *[Symbol.asyncIterator]() {
 				yield { type: "response.text.delta", delta: "sdk chunk" }
 			},
 		})
+
+		const fetchMock = stubFetchWithSse([], 4)
 
 		const handler = new TestHandler({
 			apiKey: "sk-test",
@@ -78,47 +124,21 @@ describe("BaseOpenAiCompatibleProvider Responses flow", () => {
 			results.push(chunk)
 		}
 
-		expect(mockResponsesCreate).toHaveBeenCalled()
-		const calledWith = mockResponsesCreate.mock.calls[0][0]
+		expect(currentResponsesCreate).toHaveBeenCalled()
+		const calledWith = currentResponsesCreate.mock.calls[0][0]
 		expect(calledWith.model).toBe("test-model")
 		expect(calledWith.instructions).toBe(systemPrompt)
-		// Ensure we received the streamed text chunk
+
 		const textChunks = results.filter((r) => r.type === "text")
 		expect(textChunks.length).toBeGreaterThan(0)
 		expect(textChunks[0].text).toBe("sdk chunk")
+		expect(fetchMock).not.toHaveBeenCalled()
 	})
 
-	it("falls back to SSE fetch when SDK throws or returns non-iterable", async () => {
-		// Make SDK throw
-		mockResponsesCreate.mockRejectedValue(new Error("SDK failure"))
+	it("falls back to SSE fetch when SDK throws", async () => {
+		currentResponsesCreate.mockRejectedValue(new Error("SDK failure"))
 
-		// Prepare SSE payload reader similar to other tests
-		const sampleEvent = { type: "response.text.delta", delta: "sse chunk" }
-		const ssePayload = `data: ${JSON.stringify(sampleEvent)}\n\ndata: [DONE]\n\n`
-		const encoder = new TextEncoder()
-		const chunks: Uint8Array[] = []
-		const chunkSize = 8
-		for (let i = 0; i < ssePayload.length; i += chunkSize) {
-			chunks.push(encoder.encode(ssePayload.slice(i, i + chunkSize)))
-		}
-		let idx = 0
-		const reader = {
-			async read() {
-				if (idx >= chunks.length) return { done: true, value: new Uint8Array() }
-				return { done: false, value: chunks[idx++] }
-			},
-			releaseLock() {},
-		}
-
-		// Mock global.fetch to return a Response-like object with .body.getReader()
-		vitest.stubGlobal(
-			"fetch",
-			vitest.fn().mockResolvedValue({
-				body: {
-					getReader: () => reader,
-				},
-			} as any),
-		)
+		const fetchMock = stubFetchWithSse([{ type: "response.text.delta", delta: "sse chunk" }], 8)
 
 		const handler = new TestHandler({
 			apiKey: "sk-test",
@@ -137,10 +157,38 @@ describe("BaseOpenAiCompatibleProvider Responses flow", () => {
 			results.push(chunk)
 		}
 
-		// Since SDK failed, fetch should have been used (our stub will return parsed event)
-		// and the resulting streamed text should be present
+		expect(currentResponsesCreate).toHaveBeenCalled()
+		expect(fetchMock).toHaveBeenCalled()
+
 		const textChunks = results.filter((r) => r.type === "text")
 		expect(textChunks.length).toBeGreaterThan(0)
 		expect(textChunks[0].text).toBe("sse chunk")
+	})
+
+	it("falls back to SSE fetch when SDK resolves a non-iterable result", async () => {
+		currentResponsesCreate.mockResolvedValue({})
+
+		const fetchMock = stubFetchWithSse([{ type: "response.text.delta", delta: "fallback chunk" }], 6)
+
+		const handler = new TestHandler({
+			apiKey: "sk-test",
+			apiModelId: "test-model",
+			openAiUseResponses: true,
+			baseURL: "https://api.openai.com/v1",
+		})
+
+		const results: any[] = []
+		for await (const chunk of handler.createMessage("system prompt", [
+			{ role: "user", content: [{ type: "text", text: "hello" }] } as any,
+		])) {
+			results.push(chunk)
+		}
+
+		expect(currentResponsesCreate).toHaveBeenCalled()
+		expect(fetchMock).toHaveBeenCalled()
+
+		const textChunks = results.filter((r) => r.type === "text")
+		expect(textChunks).toHaveLength(1)
+		expect(textChunks[0].text).toBe("fallback chunk")
 	})
 })

@@ -1,10 +1,58 @@
 import { describe, it, expect, vitest, beforeEach } from "vitest"
 import {
+	formatFullConversation,
 	buildResponsesRequestBody,
 	responsesSdkStream,
 	responsesSseFetch,
 	processResponsesEventStream,
 } from "../utils/openai-responses"
+
+const encoder = new TextEncoder()
+
+function createReadableStreamFromString(payload: string, chunkSize = payload.length): ReadableStream<Uint8Array> {
+	const chunks: Uint8Array[] = []
+	for (let i = 0; i < payload.length; i += chunkSize) {
+		chunks.push(encoder.encode(payload.slice(i, i + chunkSize)))
+	}
+	let index = 0
+	const reader = {
+		async read() {
+			if (index >= chunks.length) {
+				return { done: true, value: new Uint8Array() }
+			}
+			return { done: false, value: chunks[index++] }
+		},
+		releaseLock() {},
+	}
+	return { getReader: () => reader } as unknown as ReadableStream<Uint8Array>
+}
+
+const baseModel = { id: "test-model", info: {} as any }
+
+describe("formatFullConversation", () => {
+	it("converts anthropic-style messages to Responses format", () => {
+		const attachment = { type: "image_block", url: "https://example.com/cat.png" }
+		const toolCall = { type: "tool_call", name: "search", payload: { query: "docs" } }
+
+		const result = formatFullConversation("system prompt", [
+			{ role: "user", content: "hello" },
+			{ role: "assistant", content: [{ type: "text", text: "hi there" }, attachment] },
+			{ role: "user", content: [{ type: "text", text: "another" }, toolCall] },
+		])
+
+		expect(result).toHaveLength(3)
+		expect(result[0]).toEqual({
+			role: "user",
+			content: [{ type: "input_text", text: "hello" }],
+		})
+		expect(result[1].role).toBe("assistant")
+		expect(result[1].content[0]).toEqual({ type: "output_text", text: "hi there" })
+		expect(result[1].content[1]).toEqual(attachment)
+		expect(result[2].role).toBe("user")
+		expect(result[2].content[0]).toEqual({ type: "input_text", text: "another" })
+		expect(result[2].content[1]).toEqual(toolCall)
+	})
+})
 
 describe("openai-responses helpers", () => {
 	beforeEach(() => {
@@ -43,11 +91,12 @@ describe("openai-responses helpers", () => {
 		expect(body.text?.verbosity).toBe("high")
 		expect(body.temperature).toBe(0.7)
 		expect(body.service_tier).toBe("flex")
+		expect(body.store).toBe(false)
+		expect(body.stream).toBe(true)
 	})
 
 	it("responsesSdkStream throws if client missing responses.create, otherwise returns SDK value", async () => {
 		await expect(async () => {
-			// client without responses.create
 			await responsesSdkStream({}, {})
 		}).rejects.toThrow()
 
@@ -58,68 +107,131 @@ describe("openai-responses helpers", () => {
 		expect(mockCreate).toHaveBeenCalled()
 	})
 
-	it("responsesSseFetch yields parsed SSE events from fetch body", async () => {
+	it("responsesSseFetch normalizes base URLs and preserves streaming flags", async () => {
 		const sampleEvent = { type: "response.text.delta", delta: "sse-hello" }
 		const ssePayload = `data: ${JSON.stringify(sampleEvent)}\n\ndata: [DONE]\n\n`
-		const encoder = new TextEncoder()
-		const chunks: Uint8Array[] = []
-		const chunkSize = 10
-		for (let i = 0; i < ssePayload.length; i += chunkSize) {
-			chunks.push(encoder.encode(ssePayload.slice(i, i + chunkSize)))
-		}
-		let idx = 0
-		const reader = {
-			async read() {
-				if (idx >= chunks.length) return { done: true, value: new Uint8Array() }
-				return { done: false, value: chunks[idx++] }
-			},
-			releaseLock() {},
-		}
 
-		vitest.stubGlobal(
-			"fetch",
-			vitest.fn().mockResolvedValue({
-				ok: true,
-				status: 200,
-				body: {
-					getReader: () => reader,
-				},
-			} as any),
-		)
+		const fetchMock = vitest.fn().mockResolvedValue({
+			ok: true,
+			status: 200,
+			statusText: "OK",
+			body: createReadableStreamFromString(ssePayload, 7),
+		} as any)
+		vitest.stubGlobal("fetch", fetchMock)
 
-		const gen = responsesSseFetch("https://api.openai.com/v1", "sk-test", { model: "m", input: [] })
+		const requestBody = { model: "m", store: false }
 		const events: any[] = []
-		for await (const ev of gen) {
-			events.push(ev)
+		for await (const event of responsesSseFetch("https://api.openai.com/", "sk-test", requestBody)) {
+			events.push(event)
 		}
 
-		expect(events.length).toBeGreaterThan(0)
-		expect(events[0].type).toBe("response.text.delta")
-		expect(events[0].delta).toBe("sse-hello")
+		expect(fetchMock).toHaveBeenCalledTimes(1)
+		const [url, options] = fetchMock.mock.calls[0] as [string, RequestInit]
+		expect(url).toBe("https://api.openai.com/v1/responses")
+		const parsed = JSON.parse(String(options?.body))
+		expect(parsed.stream).toBe(true)
+		expect(parsed.store).toBe(false)
+		expect(parsed.model).toBe("m")
+
+		expect(events).toHaveLength(1)
+		expect(events[0]).toEqual(sampleEvent)
 	})
 
-	it("processResponsesEventStream handles single event and async iterable", async () => {
-		// single event object
-		const single = { type: "response.text.delta", delta: "one" }
-		const out1: any[] = []
-		for await (const chunk of processResponsesEventStream(single, { id: "m" } as any)) {
-			out1.push(chunk)
-		}
-		expect(out1.length).toBeGreaterThan(0)
-		expect(out1[0].type).toBe("text")
-		expect(out1[0].text).toBe("one")
+	it("responsesSseFetch throws with detailed error when fetch fails", async () => {
+		const fetchMock = vitest.fn().mockResolvedValue({
+			ok: false,
+			status: 503,
+			statusText: "Service Unavailable",
+			text: async () => "unavailable",
+		})
+		vitest.stubGlobal("fetch", fetchMock)
 
-		// async iterable of events
-		async function* source() {
-			yield { type: "response.text.delta", delta: "a" }
-			yield { type: "response.reasoning.delta", delta: "reason" }
+		await expect(async () => {
+			for await (const _ of responsesSseFetch("https://api.openai.com/v1", "sk-test", { model: "m" })) {
+				// no-op
+			}
+		}).rejects.toThrow(/503/)
+	})
+
+	it("processResponsesEventStream yields chunks from a single event", async () => {
+		const single = { type: "response.text.delta", delta: "one" }
+		const chunks: any[] = []
+		for await (const chunk of processResponsesEventStream(single, baseModel as any)) {
+			chunks.push(chunk)
 		}
-		const out2: any[] = []
-		for await (const chunk of processResponsesEventStream(source(), { id: "m" } as any)) {
-			out2.push(chunk)
+		expect(chunks).toHaveLength(1)
+		expect(chunks[0]).toEqual({ type: "text", text: "one" })
+	})
+
+	it("processResponsesEventStream handles a ReadableStream input", async () => {
+		const sampleEvent = { type: "response.text.delta", delta: "streamed" }
+		const ssePayload = `data: ${JSON.stringify(sampleEvent)}\n\ndata: [DONE]\n\n`
+		const stream = createReadableStreamFromString(ssePayload, 5)
+
+		const chunks: any[] = []
+		for await (const chunk of processResponsesEventStream(stream, baseModel as any)) {
+			chunks.push(chunk)
 		}
-		// should include both text and reasoning chunks
-		expect(out2.some((c) => c.type === "text" && c.text === "a")).toBe(true)
-		expect(out2.some((c) => c.type === "reasoning" && c.text === "reason")).toBe(true)
+
+		expect(chunks).toHaveLength(1)
+		expect(chunks[0]).toEqual({ type: "text", text: "streamed" })
+	})
+
+	it("processResponsesEventStream handles async iterable events with embedded stream and usage", async () => {
+		const sampleEvent = { type: "response.reasoning.delta", delta: "thinking" }
+		const ssePayload = `data: ${JSON.stringify(sampleEvent)}\n\ndata: [DONE]\n\n`
+
+		const iterable = {
+			async *[Symbol.asyncIterator]() {
+				yield { body: createReadableStreamFromString(ssePayload, 4) }
+				yield {
+					type: "response.usage",
+					usage: { input_tokens: 2, output_tokens: 3, cache_read_tokens: 1 },
+				}
+			},
+		}
+
+		const chunks: any[] = []
+		for await (const chunk of processResponsesEventStream(iterable, baseModel as any)) {
+			chunks.push(chunk)
+		}
+
+		expect(chunks).toHaveLength(2)
+		expect(chunks[0]).toEqual({ type: "reasoning", text: "thinking" })
+		expect(chunks[1]).toEqual({
+			type: "usage",
+			inputTokens: 2,
+			outputTokens: 3,
+			cacheWriteTokens: 0,
+			cacheReadTokens: 1,
+			totalCost: 0,
+		})
+	})
+
+	it("processResponsesEventStream maps non-streaming response outputs", async () => {
+		const responseEvent = {
+			response: {
+				output: [
+					{
+						type: "text",
+						content: [{ type: "text", text: "final text" }],
+					},
+					{
+						type: "reasoning",
+						summary: [{ type: "summary_text", text: "summary" }],
+					},
+				],
+			},
+		}
+
+		const chunks: any[] = []
+		for await (const chunk of processResponsesEventStream(responseEvent, baseModel as any)) {
+			chunks.push(chunk)
+		}
+
+		expect(chunks).toEqual([
+			{ type: "text", text: "final text" },
+			{ type: "reasoning", text: "summary" },
+		])
 	})
 })
