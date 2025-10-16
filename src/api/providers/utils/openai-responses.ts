@@ -6,6 +6,107 @@ import type {
 	ApiStreamReasoningChunk,
 } from "../../transform/stream"
 
+type FunctionCallBuffer = {
+	name?: string
+	arguments: string
+}
+
+const XML_ESCAPE_REGEX = /[&<>"']/g
+const XML_ESCAPE_MAP: Record<string, string> = {
+	"&": "&amp;",
+	"<": "&lt;",
+	">": "&gt;",
+	'"': "&quot;",
+	"'": "&apos;",
+}
+
+export function escapeXml(value: string): string {
+	return value.replace(XML_ESCAPE_REGEX, (char) => XML_ESCAPE_MAP[char] ?? char)
+}
+
+export function formatValueForXml(value: unknown): string {
+	if (value === null || value === undefined) {
+		return ""
+	}
+	if (typeof value === "object") {
+		return escapeXml(JSON.stringify(value))
+	}
+	return escapeXml(String(value))
+}
+
+export function sanitizeToolName(name?: string): string {
+	if (!name) return "tool_call"
+	const sanitized = name.replace(/[^a-zA-Z0-9_]/g, "_")
+	return sanitized.length > 0 ? sanitized : "tool_call"
+}
+
+export function formatToolCallXml(name: string, rawArguments: string): string | undefined {
+	const toolName = sanitizeToolName(name)
+	const trimmed = rawArguments?.trim?.() ?? ""
+
+	let parsed: unknown = trimmed
+	if (trimmed.length > 0) {
+		try {
+			parsed = JSON.parse(trimmed)
+		} catch {
+			parsed = trimmed
+		}
+	}
+
+	if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+		const entries = Object.entries(parsed as Record<string, unknown>).filter(([key]) => /^[a-zA-Z0-9_]+$/.test(key))
+		if (entries.length > 0) {
+			const lines = entries.map(([key, value]) => `<${key}>${formatValueForXml(value)}</${key}>`)
+			return `<${toolName}>\n${lines.join("\n")}\n</${toolName}>`
+		}
+	}
+
+	if (parsed === "" || parsed === undefined || parsed === null) {
+		return `<${toolName}></${toolName}>`
+	}
+
+	const payload =
+		typeof parsed === "string" ? parsed : typeof parsed === "object" ? JSON.stringify(parsed) : String(parsed)
+
+	return `<${toolName}>\n<arguments>${formatValueForXml(payload)}</arguments>\n</${toolName}>`
+}
+
+export function extractFunctionCallId(event: any): string | undefined {
+	return (
+		event?.call_id ||
+		event?.id ||
+		event?.function_call?.id ||
+		event?.function_call_id ||
+		event?.response?.function_call?.id ||
+		undefined
+	)
+}
+
+export function extractFunctionCallName(event: any): string | undefined {
+	return (
+		event?.name ||
+		event?.function_call?.name ||
+		event?.response?.function_call?.name ||
+		event?.function_call_arguments?.name ||
+		undefined
+	)
+}
+
+export function extractFunctionCallDelta(event: any): string {
+	if (typeof event?.delta === "string") return event.delta
+	if (typeof event?.arguments_delta === "string") return event.arguments_delta
+	if (typeof event?.function_call?.arguments_delta === "string") return event.function_call.arguments_delta
+	if (typeof event?.function_call_arguments_delta === "string") return event.function_call_arguments_delta
+	return ""
+}
+
+export function extractFunctionCallArguments(event: any): string {
+	if (typeof event?.arguments === "string") return event.arguments
+	if (typeof event?.function_call?.arguments === "string") return event.function_call.arguments
+	if (typeof event?.response?.function_call?.arguments === "string") return event.response.function_call.arguments
+	return ""
+}
+
 type ConversationMessage = {
 	role: "user" | "assistant"
 	content: any[]
