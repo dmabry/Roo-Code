@@ -23,6 +23,13 @@ import { getModelParams } from "../transform/model-params"
 
 import { BaseProvider } from "./base-provider"
 import type { SingleCompletionHandler, ApiHandlerCreateMessageMetadata } from "../index"
+import {
+	formatToolCallXml,
+	extractFunctionCallId,
+	extractFunctionCallName,
+	extractFunctionCallDelta,
+	extractFunctionCallArguments,
+} from "./utils/openai-responses"
 
 export type OpenAiNativeModel = ReturnType<OpenAiNativeHandler["getModel"]>
 
@@ -656,6 +663,9 @@ export class OpenAiNativeHandler extends BaseProvider implements SingleCompletio
 		let totalInputTokens = 0
 		let totalOutputTokens = 0
 
+		// Track function call buffers for streaming function calls
+		const functionCallBuffers = new Map<string, { name?: string; arguments: string }>()
+
 		try {
 			while (true) {
 				const { done, value } = await reader.read()
@@ -858,12 +868,43 @@ export class OpenAiNativeHandler extends BaseProvider implements SingleCompletio
 							} else if (parsed.type === "response.output_item.done") {
 								// Output item completed
 							}
-							// Handle function/tool call events
+							// Handle function/tool call events - convert to XML format
 							else if (parsed.type === "response.function_call_arguments.delta") {
 								// Function call arguments streaming
-								// We could yield this as a special type if needed for tool usage
+								const callId = extractFunctionCallId(parsed) || "default"
+								const name = extractFunctionCallName(parsed)
+								const delta = extractFunctionCallDelta(parsed)
+
+								if (!functionCallBuffers.has(callId)) {
+									functionCallBuffers.set(callId, { name, arguments: "" })
+								}
+								const buffer = functionCallBuffers.get(callId)!
+								if (name) buffer.name = name
+								buffer.arguments += delta
 							} else if (parsed.type === "response.function_call_arguments.done") {
-								// Function call completed
+								// Function call completed - emit as XML
+								const callId = extractFunctionCallId(parsed) || "default"
+								const name = extractFunctionCallName(parsed)
+
+								if (functionCallBuffers.has(callId)) {
+									const buffer = functionCallBuffers.get(callId)!
+									const finalName = buffer.name || name || "tool_call"
+									const xml = formatToolCallXml(finalName, buffer.arguments)
+
+									if (xml) {
+										hasContent = true
+										yield { type: "text", text: xml }
+									}
+									functionCallBuffers.delete(callId)
+								} else if (name) {
+									// Handle case where we get done event without deltas
+									const args = extractFunctionCallArguments(parsed)
+									const xml = formatToolCallXml(name, args)
+									if (xml) {
+										hasContent = true
+										yield { type: "text", text: xml }
+									}
+								}
 							}
 							// Handle MCP (Model Context Protocol) tool events
 							else if (parsed.type === "response.mcp_call_arguments.delta") {

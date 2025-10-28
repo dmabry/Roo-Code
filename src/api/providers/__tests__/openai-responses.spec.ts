@@ -234,4 +234,96 @@ describe("openai-responses helpers", () => {
 			{ type: "reasoning", text: "summary" },
 		])
 	})
+
+	it("processResponsesEventStream handles function call streaming and converts to XML", async () => {
+		const events = [
+			{
+				type: "response.function_call_arguments.delta",
+				call_id: "call-123",
+				name: "search_files",
+				delta: '{"path": "src", ',
+			},
+			{
+				type: "response.function_call_arguments.delta",
+				call_id: "call-123",
+				delta: '"regex": "test"}',
+			},
+			{
+				type: "response.function_call_arguments.done",
+				call_id: "call-123",
+				name: "search_files",
+			},
+		]
+
+		// Create an async iterable from events array
+		async function* eventStream() {
+			for (const event of events) {
+				yield event
+			}
+		}
+
+		const chunks: any[] = []
+		for await (const chunk of processResponsesEventStream(eventStream(), baseModel as any)) {
+			chunks.push(chunk)
+		}
+
+		expect(chunks).toHaveLength(1)
+		expect(chunks[0].type).toBe("text")
+		expect(chunks[0].text).toContain("<search_files>")
+		expect(chunks[0].text).toContain("<path>src</path>")
+		expect(chunks[0].text).toContain("<regex>test</regex>")
+		expect(chunks[0].text).toContain("</search_files>")
+	})
+
+	it("processResponsesEventStream handles function call with non-streaming done event", async () => {
+		const event = {
+			type: "response.function_call_arguments.done",
+			call_id: "call-456",
+			name: "read_file",
+			arguments: '{"path": "src/test.ts"}',
+		}
+
+		const chunks: any[] = []
+		for await (const chunk of processResponsesEventStream(event, baseModel as any)) {
+			chunks.push(chunk)
+		}
+
+		expect(chunks).toHaveLength(1)
+		expect(chunks[0].type).toBe("text")
+		expect(chunks[0].text).toContain("<read_file>")
+		expect(chunks[0].text).toContain("<path>src/test.ts</path>")
+		expect(chunks[0].text).toContain("</read_file>")
+	})
+
+	it("processResponsesEventStream handles function call with empty arguments", async () => {
+		const events = [
+			{
+				type: "response.function_call_arguments.delta",
+				call_id: "call-789",
+				name: "list_files",
+				delta: "",
+			},
+			{
+				type: "response.function_call_arguments.done",
+				call_id: "call-789",
+				name: "list_files",
+			},
+		]
+
+		// Create an async iterable from events array
+		async function* eventStream() {
+			for (const event of events) {
+				yield event
+			}
+		}
+
+		const chunks: any[] = []
+		for await (const chunk of processResponsesEventStream(eventStream(), baseModel as any)) {
+			chunks.push(chunk)
+		}
+
+		expect(chunks).toHaveLength(1)
+		expect(chunks[0].type).toBe("text")
+		expect(chunks[0].text).toBe("<list_files></list_files>")
+	})
 })

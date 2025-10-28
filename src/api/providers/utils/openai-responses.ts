@@ -330,14 +330,17 @@ export async function* processResponsesEventStream(
 		return
 	}
 
+	// Track function call buffers across events
+	const functionCallBuffers = new Map<string, FunctionCallBuffer>()
+
 	if (typeof streamOrEvent[Symbol.asyncIterator] === "function") {
 		for await (const event of streamOrEvent) {
 			if (event && typeof event === "object" && typeof event.body?.getReader === "function") {
 				for await (const parsedEvent of parseReadableStreamAsSse(event.body)) {
-					yield* processSingleEvent(parsedEvent, model)
+					yield* processSingleEvent(parsedEvent, model, functionCallBuffers)
 				}
 			} else {
-				yield* processSingleEvent(event, model)
+				yield* processSingleEvent(event, model, functionCallBuffers)
 			}
 		}
 		return
@@ -345,12 +348,12 @@ export async function* processResponsesEventStream(
 
 	if (typeof streamOrEvent?.getReader === "function") {
 		for await (const parsedEvent of parseReadableStreamAsSse(streamOrEvent)) {
-			yield* processSingleEvent(parsedEvent, model)
+			yield* processSingleEvent(parsedEvent, model, functionCallBuffers)
 		}
 		return
 	}
 
-	yield* processSingleEvent(streamOrEvent, model)
+	yield* processSingleEvent(streamOrEvent, model, functionCallBuffers)
 }
 
 /**
@@ -392,9 +395,53 @@ async function* parseReadableStreamAsSse(bodyStream: ReadableStream<Uint8Array>)
 /**
  * Process a single event into ApiStream chunks.
  */
-async function* processSingleEvent(event: any, model: { id: string; info: ModelInfo }) {
+async function* processSingleEvent(
+	event: any,
+	model: { id: string; info: ModelInfo },
+	functionCallBuffers?: Map<string, FunctionCallBuffer>,
+) {
 	if (!event) return
 	const type = event.type ?? event.event
+
+	// Handle function call events - convert to XML format for RooCode
+	if (type === "response.function_call_arguments.delta") {
+		const callId = extractFunctionCallId(event)
+		const name = extractFunctionCallName(event)
+		const delta = extractFunctionCallDelta(event)
+
+		if (callId && functionCallBuffers) {
+			if (!functionCallBuffers.has(callId)) {
+				functionCallBuffers.set(callId, { name, arguments: "" })
+			}
+			const buffer = functionCallBuffers.get(callId)!
+			if (name) buffer.name = name
+			buffer.arguments += delta
+		}
+		return
+	}
+
+	if (type === "response.function_call_arguments.done") {
+		const callId = extractFunctionCallId(event)
+		const name = extractFunctionCallName(event) || extractFunctionCallArguments(event)
+
+		if (callId && functionCallBuffers?.has(callId)) {
+			const buffer = functionCallBuffers.get(callId)!
+			const finalName = buffer.name || name
+			const xml = formatToolCallXml(finalName || "tool_call", buffer.arguments)
+			if (xml) {
+				yield { type: "text", text: xml } as ApiStreamTextChunk
+			}
+			functionCallBuffers.delete(callId)
+		} else if (name) {
+			// Handle case where we get done event without deltas
+			const args = extractFunctionCallArguments(event)
+			const xml = formatToolCallXml(name, args)
+			if (xml) {
+				yield { type: "text", text: xml } as ApiStreamTextChunk
+			}
+		}
+		return
+	}
 
 	// Text delta or output text delta
 	if (type === "response.text.delta" || type === "response.output_text.delta") {
