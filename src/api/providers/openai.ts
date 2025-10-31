@@ -205,6 +205,12 @@ export class OpenAiHandler extends BaseProvider implements SingleCompletionHandl
 						text: (delta.reasoning_content as string | undefined) || "",
 					}
 				}
+				if ("reasoning" in delta && delta.reasoning) {
+					yield {
+						type: "reasoning",
+						text: (delta.reasoning as string | undefined) || "",
+					}
+				}
 				if (chunk.usage) {
 					lastUsage = chunk.usage
 				}
